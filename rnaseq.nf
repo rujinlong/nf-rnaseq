@@ -65,9 +65,12 @@ process align_to_cds {
     script:
     """
     bowtie2-build $ref_cds reference
+    
+    # Mapping all clean reads to CDS
     bowtie2 --very-sensitive-local -x reference -1 $reads1 -2 $reads2 -U $singletons -p $task.cpus -S ${sampleID}_cds.sam 1> ${sampleID}_cds.log 2>&1
     samtools sort -@ $task.cpus ${sampleID}_cds.sam > ${sampleID}_cds.bam
     
+    # Extract reads not mapped to CDS (will be used in process `align_to_genome_plus_unmapped1`)
     mem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
     samtools view -f 4 ${sampleID}_cds.bam | reformat.sh -Xmx\$mem in=stdin.sam out=${sampleID}_cds_unmapped.fasta.gz
     """
@@ -125,13 +128,18 @@ process align_to_genome_plus_unmapped1 {
     script:
     """
     bowtie2-build $ref_genome reference
+    
+    # Mapping all clean reads to genome
     bowtie2 --very-sensitive-local -x reference -1 $reads1 -2 $reads2 -U $singletons -p $task.cpus -S ${sampleID}_genome.sam 1> ${sampleID}_genome.log 2>&1
     samtools sort -@ $task.cpus ${sampleID}_genome.sam > ${sampleID}_genome.bam
-    mem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
-    samtools view -f 4 ${sampleID}_genome.bam | reformat.sh -Xmx\$mem in=stdin.sam out=${sampleID}_genome_unmapped.fasta.gz
     samtools depth ${sampleID}_genome.bam > tmp_genome.depth
     calc_depth.py -i tmp_genome.depth -o ${sampleID}_genome.depth
+    
+    # Extract unmapped reads (will be used in process `unmapped2_reads_to_kegg` )
+    mem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+    samtools view -f 4 ${sampleID}_genome.bam | reformat.sh -Xmx\$mem in=stdin.sam out=${sampleID}_genome_unmapped.fasta.gz
 
+    # Mapping non-CDS reads to genome
     bowtie2 --very-sensitive-local -x reference -f $cds_unmapped -p $task.cpus -S ${sampleID}_nonCDS_genome.sam 1> ${sampleID}_nonCDS_genome.log 2>&1
     samtools sort -@ $task.cpus ${sampleID}_nonCDS_genome.sam > ${sampleID}_nonCDS_genome.bam
     samtools depth ${sampleID}_nonCDS_genome.bam > tmp_nonCDS.depth
@@ -180,8 +188,8 @@ process unmapped2_reads_to_kegg {
 
     script:
     """
-    diamond blastx -p $task.cpus -d $params.kegg_vg -q $genome_unmapped -o ${sampleID}_anno_KEGGvg.tsv -f 6 --top 1 -e 0.000001
-    diamond blastx -p $task.cpus -d $params.kegg_bac -q $genome_unmapped -o ${sampleID}_anno_KEGGbac.tsv -f 6 --top 1 -e 0.000001
+    diamond blastx -p $task.cpus -d $params.kegg_vg -q $genome_unmapped -o ${sampleID}_anno_KEGGvg.tsv -f 6 --top 10 -e 0.000001
+    diamond blastx -p $task.cpus -d $params.kegg_bac -q $genome_unmapped -o ${sampleID}_anno_KEGGbac.tsv -f 6 --top 10 -e 0.000001
     """
 }
 
@@ -204,7 +212,7 @@ process feature_abundance {
     """
     # Should be reads aligned to genome bam
     featureCounts -t CDS -g ID -a $gff -o feature_counts_cds.tsv -T $task.cpus *.bam
-    # featureCounts -t gene -g ID -a $gff -o feature_counts_gene.tsv -T $task.cpus *.bam
+    featureCounts -t gene -g ID -a $gff -o feature_counts_gene.tsv -T $task.cpus *.bam
     """
 }
 
