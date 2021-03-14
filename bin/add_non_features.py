@@ -5,7 +5,7 @@ import pandas as pd
 
 def add_non_features(df, clms, min_gap=50):
     df.sort_values(by='nstart', inplace=True)
-    nprev = 0
+    nprev = 1
     non_features = []
     for i in range(len(df)):
         nstart = df.loc[i, 'nstart']
@@ -15,13 +15,13 @@ def add_non_features(df, clms, min_gap=50):
             seqname = df.loc[i, 'seqname']
             non_features.append([seqname, 
                                df.loc[i, 'source'],
-                               'non_feature',
+                               'nonCDS',
                                nprev,
                                nstart,
                                '.',
                                df.loc[i, 'strand'],
                                df.loc[i, 'frame'],
-                               "ID={}:{}-{}".format(seqname, str(nprev), str(nstart))])
+                               "ID={}:{}-{}_nonCDS".format(seqname, str(nprev), str(nstart))])
         nprev = df.loc[i, 'nend']
 
     df_non_features = pd.DataFrame(non_features, columns=clms)
@@ -42,8 +42,12 @@ def main(fin, fout, min_gap):
     """
     clms = ['seqname', 'source', 'feature', 'nstart', 'nend', 'score', 'strand', 'frame', 'attr']
     df = pd.read_csv(fin, sep='\t', comment='#', names=clms)
+    # Use CDS, instead of gene, because no gene annotation for phage
+    df = df[df.feature=='CDS'].copy()
+    df.reset_index(drop=True, inplace=True)
+    print(df.shape)
     df2 = add_non_features(df, clms, min_gap)
-    df2.to_csv(fout, sep='\t', index=False)
+    df2.to_csv(fout, sep='\t', index=False, header=False)
 
 
 if __name__ == '__main__':
