@@ -205,6 +205,7 @@ process feature_abundance {
     output:
     path("*.tsv")
     path("*.gff")
+    path("feature_counts.tsv"), emit: feature_counts
 
     when:
     params.mode == "all"
@@ -217,6 +218,56 @@ process feature_abundance {
     # featureCounts -t gene -g ID -a with_nonCDS.gff -o feature_counts_gene.tsv -T $task.cpus *.bam
     featureCounts -t nonCDS -g ID -a with_nonCDS.gff -o feature_counts_nonCDS.tsv -T $task.cpus *.bam
     merge_feature_counts.py -c feature_counts_CDS.tsv -n feature_counts_nonCDS.tsv -o feature_counts.tsv
+    """
+}
+
+
+process pathway_analysis {
+    label "medium"
+    publishDir "$params.outdir/p06_pathway", pattern: "*"
+    publishDir "$params.report", pattern: "*"
+    
+    input:
+    path(viral_cds)
+
+    output:
+    path("*.tsv")
+    path("cds2ko.tsv"), emit: cds2ko
+
+    when:
+    params.mode == "all"
+
+    script:
+    """
+    diamond blastx -p $task.cpus -d $params.kegg_db -q $viral_cds -o anno_virus_KEGGnvg.diamond -f 6 --top 1 -e 0.000001
+    diamond blastx -p $task.cpus -d $params.kegg_vg -q $viral_cds -o anno_virus_KEGGvg.diamond -f 6 --top 1 -e 0.000001
+    cat anno_virus_KEGG* > anno_virus_mergeKEGG.diamond
+    kegg_anno_to_ko.py -a anno_virus_mergeKEGG.diamond -m $params.kegg_gene2ko -o tmp.tsv -b 50 -e 0.000001
+    kegg_anno_to_ko.py -a anno_virus_mergeKEGG.diamond -m $params.keggvg_gene2ko -o tmp2.tsv -b 50 -e 0.000001
+    cat tmp.tsv tmp2.tsv | grep -v '^prot_id' | cut -f1,3 | sort -u > virgene2ko.tsv
+    cat $params.bacgene2ko virgene2ko.tsv > cds2ko.tsv
+    """
+}
+
+
+process clean_output {
+    label "small"
+    publishDir "$params.outdir/p07_clean_output", pattern: "*"
+    publishDir "$params.report", pattern: "*"
+    
+    input:
+    path(feature_counts)
+    path(cds2ko)
+
+    output:
+    path("*.tsv")
+
+    when:
+    params.mode == "all"
+
+    script:
+    """
+    kegg_pathway.py -b $params.gff_bacteria -v $params.gbk_virus -c $feature_counts -k $cds2ko -p $params.kegg_pathway -o table_feature_counts.tsv -f table_annotation_counts.tsv
     """
 }
 
@@ -249,6 +300,8 @@ workflow {
     plot_figures(align_to_genome_plus_unmapped1.out.nonCDS_depth_ch.join(reformat_cds_location.out.cds_depth_ch, by:0))
     unmapped2_reads_to_kegg(align_to_genome_plus_unmapped1.out.genome_unmapped_ch)
     feature_abundance(params.gff, align_to_genome_plus_unmapped1.out.bam_merge_ch.collect())
+    pathway_analysis(params.viral_cds)
+    clean_output(feature_abundance.out.feature_counts, pathway_analysis.out.cds2ko)
     
     if( params.mode == "fastqc" ) {
         multiqc(fastqc.out.fastqc_results_ch.collect())
